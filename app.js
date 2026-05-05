@@ -192,14 +192,16 @@
     auto_tag: {
       type: "object",
       properties: {
-        // Free-form nullable string — the client validates the value
-        // against ROOM_TAGS so we don't need an enum here, which
-        // avoids JSON-schema quirks around mixing enum with null.
+        // Free-form nullable strings — the client validates the values
+        // against ROOM_TAGS / DEFAULT_GROUPS so we don't need an enum
+        // here, which avoids JSON-schema quirks around mixing enum
+        // with null.
         tag: { type: ["string", "null"] },
+        category: { type: ["string", "null"] },
         reason: { type: "string" },
         confidence: { type: "string", enum: ["high", "medium", "low"] },
       },
-      required: ["tag", "reason", "confidence"],
+      required: ["tag", "category", "reason", "confidence"],
       additionalProperties: false,
     },
   };
@@ -275,7 +277,9 @@
       shortLabel: "Auto-tag",
       systemPrompt:
         "You are a Domestic Energy Assessor's assistant tagging photos in a UK retrofit survey.\n\n" +
-        "Pick the SINGLE best tag for the photo from this fixed list:\n" +
+        "Return TWO independent classifications for the photo: a quick subject `tag` and the report `category` " +
+        "the photo should sit under in the assessor's evidence pack.\n\n" +
+        "TAG — pick the SINGLE best tag for the photo from this fixed list:\n" +
         "- Room — general view of a room or its empty walls.\n" +
         "- Undercuts — gaps below an internal door (door + floor visible).\n" +
         "- Windows — close-up of a window: frame, glass, sash, sill, or a clear shot of one whole window.\n" +
@@ -288,11 +292,35 @@
         "- Renewables — solar PV / thermal panels, battery storage, heat-pump indoor or outdoor units, EV chargers.\n" +
         "- Meters — electricity meter, gas meter, smart meter In-Home Display.\n" +
         "- Other — anything else (general construction, walls, ceilings, junction boxes, exterior shots that don't fit).\n\n" +
-        "Return tag = null if you genuinely cannot tell. Don't guess wildly — if you're not at least medium-confident, " +
-        "prefer null. confidence: high only when the subject is unambiguous and dominates the frame. " +
-        "Keep reason to one short sentence describing what you see.",
+        "CATEGORY — pick the SINGLE best report category from this fixed list. Return the name EXACTLY as written:\n" +
+        "- External Elevations — exterior shots of the building façades, gables, side returns.\n" +
+        "- Wall Construction — close-ups showing wall makeup (cavity, solid brick, timber frame, insulation, render).\n" +
+        "- Roof Construction — roof from outside, eaves, ridge, chimneys, verges, soffits.\n" +
+        "- Loft Space Access — loft hatch, loft ladder, hatch frame.\n" +
+        "- Loft Insulation — insulation laid between / over the joists in the loft space.\n" +
+        "- Roof Rooms — rooms within the roof space (sloped ceilings, dormers from inside).\n" +
+        "- Primary Heating System — main heat source: gas / oil / LPG / electric boiler, heat-pump unit when used as primary.\n" +
+        "- Heating System Controls — thermostats, room stats, programmers, timers, smart heating controls.\n" +
+        "- Secondary Heating System — fireplaces, wood-burning stoves, plug-in electric heaters used as supplementary heat.\n" +
+        "- Hot Water Cylinder — hot water tank / cylinder (insulated jacket or unvented).\n" +
+        "- Openings — windows and external doors, including conservatory doors.\n" +
+        "- Light Fittings — light fittings, bulbs, lamps, recessed downlights.\n" +
+        "- Ventilation — extractor fans, MVHR / MEV units, air bricks, trickle / DMEV vents.\n" +
+        "- Corridor / Stairwell — hallways, landings, staircases.\n" +
+        "- Shower / Bath — showers, baths, wet rooms.\n" +
+        "- Electricity Meter — electricity meter or smart-meter In-Home Display.\n" +
+        "- Gas Meter — gas meter.\n" +
+        "- Heating Fuel — oil tanks, LPG cylinders, solid-fuel stores.\n" +
+        "- Conservatory — conservatory interior or exterior.\n" +
+        "- Renewables — solar PV / thermal panels, battery storage, heat-pump indoor or outdoor units, EV chargers.\n" +
+        "- Additional Evidence — anything genuinely useful that doesn't fit any other category.\n" +
+        "- Floorplan — floorplan drawings, sketches, or printed plans.\n\n" +
+        "Return tag = null and / or category = null if you genuinely cannot tell. Don't guess wildly — if you're " +
+        "not at least medium-confident on a field, prefer null. confidence: high only when the subject is " +
+        "unambiguous and dominates the frame. Keep reason to one short sentence describing what you see.",
       userPrompt:
-        "Tag this photo with the single most appropriate retrofit-survey tag, or null if unclear.",
+        "Tag this photo with the single most appropriate retrofit-survey tag and the best report category, " +
+        "or null if unclear.",
       schema: ANALYSIS_SCHEMAS.auto_tag,
     },
     {
@@ -4684,6 +4712,11 @@
     const { mediaType, base64 } = splitDataUrl(smaller);
     if (!base64) throw new Error("Couldn't read the photo data.");
 
+    // Use tool-use with a forced tool_choice to get a strictly-typed JSON
+    // response. Anthropic's structured-outputs path uses an input_schema
+    // on a tool definition; the model is required to call the tool, and
+    // its arguments arrive as `tool_use.input` already parsed as JSON.
+    const toolName = `record_${presetId}`;
     const body = {
       model,
       max_tokens: 2048,
@@ -4694,6 +4727,15 @@
           cache_control: { type: "ephemeral" },
         },
       ],
+      tools: [
+        {
+          name: toolName,
+          description:
+            "Record the structured analysis result for the supplied photo.",
+          input_schema: preset.schema,
+        },
+      ],
+      tool_choice: { type: "tool", name: toolName },
       messages: [
         {
           role: "user",
@@ -4710,12 +4752,6 @@
           ],
         },
       ],
-      output_config: {
-        format: {
-          type: "json_schema",
-          schema: preset.schema,
-        },
-      },
     };
 
     let response;
@@ -4747,13 +4783,23 @@
     }
 
     const result = await response.json();
-    const textBlock = (result.content || []).find((b) => b.type === "text");
-    if (!textBlock) throw new Error("Empty response from Claude.");
+    const toolUse = (result.content || []).find(
+      (b) => b.type === "tool_use" && b.name === toolName
+    );
     let data;
-    try {
-      data = JSON.parse(textBlock.text);
-    } catch (_) {
-      throw new Error("Claude returned a non-JSON response.");
+    if (toolUse && toolUse.input && typeof toolUse.input === "object") {
+      data = toolUse.input;
+    } else {
+      // Fallback: the model returned free-form text instead of calling
+      // the tool. Try to parse the first text block as JSON so we still
+      // get something usable.
+      const textBlock = (result.content || []).find((b) => b.type === "text");
+      if (!textBlock) throw new Error("Empty response from Claude.");
+      try {
+        data = JSON.parse(textBlock.text);
+      } catch (_) {
+        throw new Error("Claude returned a non-JSON response.");
+      }
     }
 
     return {
@@ -4911,13 +4957,18 @@
   function queueAutoTag(photos) {
     if (!isAutoTagEnabled()) return;
     if (!Array.isArray(photos) || !photos.length) return;
+    let queued = 0;
     for (const p of photos) {
       if (!p || isLaserCapturePhoto(p)) continue;
-      // Don't overwrite a tag the user has already set manually.
-      if (p.roomTag) continue;
+      // We only really need to skip when there's nothing left for us
+      // to do: an existing room tag AND the photo already sits in a
+      // real (non-Untagged) category.
+      const owner = findOwningGroup(p.id);
+      if (p.roomTag && owner && !isUntaggedGroup(owner)) continue;
       autoTagState.queue.push(p.id);
+      queued++;
     }
-    pumpAutoTagQueue();
+    if (queued) pumpAutoTagQueue();
   }
 
   async function pumpAutoTagQueue() {
@@ -4927,24 +4978,54 @@
       while (autoTagState.queue.length) {
         const id = autoTagState.queue.shift();
         const photo = state.photos.get(id);
-        if (!photo || photo.roomTag || isLaserCapturePhoto(photo)) continue;
+        if (!photo || isLaserCapturePhoto(photo)) continue;
+        // Skip if both the room tag and category have already been set —
+        // there's nothing for us to add. A partial state (one set, one
+        // missing) still goes through so we can fill in the gap.
+        const owner = findOwningGroup(id);
+        if (photo.roomTag && owner && !isUntaggedGroup(owner)) continue;
         try {
           const data = await runPhotoAutoTag(photo);
-          const tag = data && data.tag;
-          if (!tag || !ROOM_TAGS.includes(tag)) continue;
-          // The user may have set the tag manually while we were
-          // analysing — don't clobber that.
           const fresh = state.photos.get(id);
-          if (!fresh || fresh.roomTag) continue;
-          fresh.roomTag = tag;
-          try {
-            await savePhotoNow(fresh);
-          } catch (err) {
-            console.warn("Failed to persist auto-tag", err);
+          if (!fresh) continue;
+
+          let touched = false;
+
+          const tag = data && data.tag;
+          if (
+            tag &&
+            ROOM_TAGS.includes(tag) &&
+            // Don't clobber a tag the user set manually mid-analysis.
+            !fresh.roomTag
+          ) {
+            fresh.roomTag = tag;
+            syncThumbRoomTagDropdowns(id, tag);
+            touched = true;
           }
-          // Refresh any visible thumb dropdowns so the new tag shows.
-          syncThumbRoomTagDropdowns(id, tag);
-          saveProperty();
+
+          // Move the photo into the suggested category, but only if it's
+          // still in "No Category Defined" — never override an explicit
+          // user choice.
+          const category = data && data.category;
+          if (category && isValidCategoryName(category)) {
+            const currentOwner = findOwningGroup(id);
+            if (isUntaggedGroup(currentOwner)) {
+              const target = findGroupByName(category);
+              if (target && movePhotoBetweenGroups(id, target.id)) {
+                touched = true;
+              }
+            }
+          }
+
+          if (touched) {
+            try {
+              await savePhotoNow(fresh);
+            } catch (err) {
+              console.warn("Failed to persist auto-tag", err);
+            }
+            saveProperty();
+            renderGroups();
+          }
         } catch (err) {
           // Auto-tagging is best-effort — log and move on so a single
           // failure doesn't stall the queue.
@@ -4954,6 +5035,21 @@
     } finally {
       autoTagState.running = false;
     }
+  }
+
+  function isValidCategoryName(name) {
+    if (!name) return false;
+    return DEFAULT_GROUPS.some(
+      (g) => g.name.toLowerCase() === String(name).toLowerCase()
+    );
+  }
+
+  function findGroupByName(name) {
+    if (!state.property || !name) return null;
+    const target = String(name).toLowerCase();
+    return (state.property.groups || []).find(
+      (g) => (g.name || "").toLowerCase() === target
+    ) || null;
   }
 
   function syncThumbRoomTagDropdowns(photoId, tag) {
