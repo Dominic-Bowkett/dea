@@ -292,35 +292,16 @@
         "- Renewables — solar PV / thermal panels, battery storage, heat-pump indoor or outdoor units, EV chargers.\n" +
         "- Meters — electricity meter, gas meter, smart meter In-Home Display.\n" +
         "- Other — anything else (general construction, walls, ceilings, junction boxes, exterior shots that don't fit).\n\n" +
-        "CATEGORY — pick the SINGLE best report category from this fixed list. Return the name EXACTLY as written:\n" +
-        "- External Elevations — exterior shots of the building façades, gables, side returns.\n" +
-        "- Wall Construction — close-ups showing wall makeup (cavity, solid brick, timber frame, insulation, render).\n" +
-        "- Roof Construction — roof from outside, eaves, ridge, chimneys, verges, soffits.\n" +
-        "- Loft Space Access — loft hatch, loft ladder, hatch frame.\n" +
-        "- Loft Insulation — insulation laid between / over the joists in the loft space.\n" +
-        "- Roof Rooms — rooms within the roof space (sloped ceilings, dormers from inside).\n" +
-        "- Primary Heating System — main heat source: gas / oil / LPG / electric boiler, heat-pump unit when used as primary.\n" +
-        "- Heating System Controls — thermostats, room stats, programmers, timers, smart heating controls.\n" +
-        "- Secondary Heating System — fireplaces, wood-burning stoves, plug-in electric heaters used as supplementary heat.\n" +
-        "- Hot Water Cylinder — hot water tank / cylinder (insulated jacket or unvented).\n" +
-        "- Openings — windows and external doors, including conservatory doors.\n" +
-        "- Light Fittings — light fittings, bulbs, lamps, recessed downlights.\n" +
-        "- Ventilation — extractor fans, MVHR / MEV units, air bricks, trickle / DMEV vents.\n" +
-        "- Corridor / Stairwell — hallways, landings, staircases.\n" +
-        "- Shower / Bath — showers, baths, wet rooms.\n" +
-        "- Electricity Meter — electricity meter or smart-meter In-Home Display.\n" +
-        "- Gas Meter — gas meter.\n" +
-        "- Heating Fuel — oil tanks, LPG cylinders, solid-fuel stores.\n" +
-        "- Conservatory — conservatory interior or exterior.\n" +
-        "- Renewables — solar PV / thermal panels, battery storage, heat-pump indoor or outdoor units, EV chargers.\n" +
-        "- Additional Evidence — anything genuinely useful that doesn't fit any other category.\n" +
-        "- Floorplan — floorplan drawings, sketches, or printed plans.\n\n" +
+        "CATEGORY — the user supplies the exact list of report categories available for this property in their " +
+        "next message. Pick the SINGLE best name from THAT list and return it EXACTLY as written, including " +
+        "punctuation and capitalisation. Do not invent categories that aren't in the list. If none of them fit " +
+        "well, return category = null rather than forcing a wrong one.\n\n" +
         "Return tag = null and / or category = null if you genuinely cannot tell. Don't guess wildly — if you're " +
         "not at least medium-confident on a field, prefer null. confidence: high only when the subject is " +
         "unambiguous and dominates the frame. Keep reason to one short sentence describing what you see.",
       userPrompt:
-        "Tag this photo with the single most appropriate retrofit-survey tag and the best report category, " +
-        "or null if unclear.",
+        "Tag this photo with the single most appropriate retrofit-survey tag and the best report category " +
+        "from the categories listed below, or null if unclear.",
       schema: ANALYSIS_SCHEMAS.auto_tag,
     },
     {
@@ -4700,7 +4681,7 @@
     }
   }
 
-  async function runPhotoAnalysis(photo, presetId) {
+  async function runPhotoAnalysis(photo, presetId, options = {}) {
     const preset = getAnalysisPreset(presetId);
     if (!preset) throw new Error("Unknown analysis preset");
     const apiKey = getClaudeApiKey();
@@ -4717,6 +4698,25 @@
     // on a tool definition; the model is required to call the tool, and
     // its arguments arrive as `tool_use.input` already parsed as JSON.
     const toolName = `record_${presetId}`;
+
+    const userContent = [
+      {
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: mediaType,
+          data: base64,
+        },
+      },
+      { type: "text", text: preset.userPrompt },
+    ];
+    // Per-call extra context (e.g. the live list of report categories
+    // for auto-tag). Appended after the user prompt so the model has
+    // both the question and the constraint in the same message.
+    if (options.extraUserText) {
+      userContent.push({ type: "text", text: options.extraUserText });
+    }
+
     const body = {
       model,
       max_tokens: 2048,
@@ -4739,17 +4739,7 @@
       messages: [
         {
           role: "user",
-          content: [
-            {
-              type: "image",
-              source: {
-                type: "base64",
-                media_type: mediaType,
-                data: base64,
-              },
-            },
-            { type: "text", text: preset.userPrompt },
-          ],
+          content: userContent,
         },
       ],
     };
@@ -4949,8 +4939,31 @@
     } catch (_) { /* ignore */ }
   }
 
+  // The categories the model is allowed to pick from come from the
+  // user's CURRENT property — not the static DEFAULT_GROUPS — so any
+  // renames, additions, or N/A-marked groups stay in sync. Returns
+  // the array of group records (not just names) so callers can also
+  // validate the response and look up by id later.
+  function liveAutoTagCategories() {
+    if (!state.property) return [];
+    return (state.property.groups || []).filter(
+      (g) => g && g.name && !isUntaggedGroup(g) && g.naMarked !== true
+    );
+  }
+
+  function buildAutoTagCategoryContext(groups) {
+    if (!Array.isArray(groups) || !groups.length) return "";
+    const lines = groups.map((g) => `- ${g.name}`).join("\n");
+    return (
+      "REPORT CATEGORIES available for this property — pick one of " +
+      "these names verbatim, or null if none fit:\n" + lines
+    );
+  }
+
   async function runPhotoAutoTag(photo) {
-    const result = await runPhotoAnalysis(photo, "auto_tag");
+    const groups = liveAutoTagCategories();
+    const extraUserText = buildAutoTagCategoryContext(groups);
+    const result = await runPhotoAnalysis(photo, "auto_tag", { extraUserText });
     return result && result.data ? result.data : null;
   }
 
@@ -5005,13 +5018,19 @@
 
           // Move the photo into the suggested category, but only if it's
           // still in "No Category Defined" — never override an explicit
-          // user choice.
+          // user choice. Match against the live property groups so
+          // renamed / custom categories also resolve.
           const category = data && data.category;
-          if (category && isValidCategoryName(category)) {
+          if (category) {
             const currentOwner = findOwningGroup(id);
             if (isUntaggedGroup(currentOwner)) {
               const target = findGroupByName(category);
-              if (target && movePhotoBetweenGroups(id, target.id)) {
+              if (
+                target &&
+                !isUntaggedGroup(target) &&
+                target.naMarked !== true &&
+                movePhotoBetweenGroups(id, target.id)
+              ) {
                 touched = true;
               }
             }
@@ -5035,13 +5054,6 @@
     } finally {
       autoTagState.running = false;
     }
-  }
-
-  function isValidCategoryName(name) {
-    if (!name) return false;
-    return DEFAULT_GROUPS.some(
-      (g) => g.name.toLowerCase() === String(name).toLowerCase()
-    );
   }
 
   function findGroupByName(name) {
