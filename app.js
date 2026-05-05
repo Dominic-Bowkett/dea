@@ -786,36 +786,6 @@
       y += fontPx + lineGap;
     }
     ctx.shadowBlur = 0;
-
-    // DEA brand wordmark, bottom-left. Black box matches the height of
-    // the date / GPS stamp on the right; the text sits centred inside
-    // with a small inner margin.
-    const innerPadY = Math.max(2, Math.round(pad * 0.6));
-    const innerPadX = Math.max(6, Math.round(pad * 1.2));
-    const brandFontPx = Math.max(14, Math.round(boxH - innerPadY * 2));
-    const prevFont = ctx.font;
-    const prevAlign = ctx.textAlign;
-    ctx.font = `800 ${brandFontPx}px -apple-system, Roboto, "Segoe UI", Arial, sans-serif`;
-    ctx.textAlign = "left";
-    const brandTextW = ctx.measureText(BRAND_TEXT).width;
-    const logoBoxH = boxH;
-    const logoBoxW = Math.min(brandTextW + innerPadX * 2, Math.round(width * 0.32));
-    const lx = pad;
-    const ly = height - pad - logoBoxH;
-    ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
-    roundRect(ctx, lx, ly, logoBoxW, logoBoxH, Math.round(pad * 0.6));
-    ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.shadowColor = "rgba(0,0,0,0.75)";
-    ctx.shadowBlur = 2;
-    ctx.fillText(
-      BRAND_TEXT,
-      lx + (logoBoxW - brandTextW) / 2,
-      ly + (logoBoxH - brandFontPx) / 2 + brandFontPx * 0.85
-    );
-    ctx.shadowBlur = 0;
-    ctx.font = prevFont;
-    ctx.textAlign = prevAlign;
   }
 
   async function processFile(file) {
