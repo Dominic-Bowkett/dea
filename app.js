@@ -4973,11 +4973,18 @@
     let queued = 0;
     for (const p of photos) {
       if (!p || isLaserCapturePhoto(p)) continue;
-      // We only really need to skip when there's nothing left for us
-      // to do: an existing room tag AND the photo already sits in a
-      // real (non-Untagged) category.
+      // Skip only when every step is already done: a room tag, a real
+      // (non-Untagged) category, and a user-written label. Otherwise
+      // queue it so the worker can fill in whatever's missing.
       const owner = findOwningGroup(p.id);
-      if (p.roomTag && owner && !isUntaggedGroup(owner)) continue;
+      if (
+        p.roomTag &&
+        owner &&
+        !isUntaggedGroup(owner) &&
+        !isReplaceableLabel(p.label, owner.name)
+      ) {
+        continue;
+      }
       autoTagState.queue.push(p.id);
       queued++;
     }
@@ -4992,11 +4999,21 @@
         const id = autoTagState.queue.shift();
         const photo = state.photos.get(id);
         if (!photo || isLaserCapturePhoto(photo)) continue;
-        // Skip if both the room tag and category have already been set —
-        // there's nothing for us to add. A partial state (one set, one
-        // missing) still goes through so we can fill in the gap.
-        const owner = findOwningGroup(id);
-        if (photo.roomTag && owner && !isUntaggedGroup(owner)) continue;
+        // Bail out only if there's literally nothing left to do —
+        // the photo has a tag, sits in a real category, and the
+        // label is a user-typed one (not blank or the default).
+        const preOwner = findOwningGroup(id);
+        const labelDone =
+          preOwner &&
+          !isReplaceableLabel(photo.label, preOwner.name);
+        if (
+          photo.roomTag &&
+          preOwner &&
+          !isUntaggedGroup(preOwner) &&
+          labelDone
+        ) {
+          continue;
+        }
         try {
           const data = await runPhotoAutoTag(photo);
           const fresh = state.photos.get(id);
@@ -5036,9 +5053,37 @@
             }
           }
 
+          // Auto-label: now that we know the photo's category, ask Claude
+          // for a short location-prefixed label. Only fires when the
+          // existing label is empty or still the auto-seeded default
+          // pattern, so a user-typed label is never overwritten.
+          const owner = findOwningGroup(id);
+          if (
+            owner &&
+            !isUntaggedGroup(owner) &&
+            isReplaceableLabel(fresh.label, owner.name)
+          ) {
+            try {
+              const newLabel = await runPhotoLabel(fresh, owner.name);
+              if (newLabel) {
+                const stillFresh = state.photos.get(id);
+                if (
+                  stillFresh &&
+                  isReplaceableLabel(stillFresh.label, owner.name)
+                ) {
+                  stillFresh.label = newLabel;
+                  syncThumbLabel(id, newLabel);
+                  touched = true;
+                }
+              }
+            } catch (err) {
+              console.warn("auto-label failed for", id, err);
+            }
+          }
+
           if (touched) {
             try {
-              await savePhotoNow(fresh);
+              await savePhotoNow(state.photos.get(id) || fresh);
             } catch (err) {
               console.warn("Failed to persist auto-tag", err);
             }
@@ -5054,6 +5099,29 @@
     } finally {
       autoTagState.running = false;
     }
+  }
+
+  // The label is "replaceable" when it's blank or still matches the
+  // auto-seeded "<Group> N" default that commitBufferedPhotos /
+  // addUploadedPhotos write on capture / upload. Either form is safe
+  // to overwrite with a Claude-generated label.
+  function isReplaceableLabel(label, baseName) {
+    if (!label || !label.trim()) return true;
+    if (!baseName) return false;
+    const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const base = escapeRe(baseName);
+    return new RegExp(`^${base}(?:\\s+|\\s+—\\s+)\\d+$`).test(label.trim());
+  }
+
+  function syncThumbLabel(photoId, label) {
+    if (!photoId) return;
+    const inputs = document.querySelectorAll(
+      `[data-photo-id="${photoId}"] .thumb-label`
+    );
+    inputs.forEach((el) => {
+      if ("value" in el) el.value = label;
+      else el.textContent = label;
+    });
   }
 
   function findGroupByName(name) {
@@ -5110,9 +5178,10 @@
       "Respond with ONLY the label text via the JSON schema — no quotes, no preamble.";
 
     const userPrompt = locLine
-      ? `${locLine} Write a short label. Return JSON with a single "label" field.`
-      : 'Write a short label for this photo. Return JSON with a single "label" field.';
+      ? `${locLine} Write a short label. Call the record_label tool with the label text.`
+      : "Write a short label for this photo. Call the record_label tool with the label text.";
 
+    const toolName = "record_label";
     const body = {
       model,
       max_tokens: 128,
@@ -5123,6 +5192,19 @@
           cache_control: { type: "ephemeral" },
         },
       ],
+      tools: [
+        {
+          name: toolName,
+          description: "Record the photo label.",
+          input_schema: {
+            type: "object",
+            properties: { label: { type: "string" } },
+            required: ["label"],
+            additionalProperties: false,
+          },
+        },
+      ],
+      tool_choice: { type: "tool", name: toolName },
       messages: [
         {
           role: "user",
@@ -5135,17 +5217,6 @@
           ],
         },
       ],
-      output_config: {
-        format: {
-          type: "json_schema",
-          schema: {
-            type: "object",
-            properties: { label: { type: "string" } },
-            required: ["label"],
-            additionalProperties: false,
-          },
-        },
-      },
     };
 
     let response;
@@ -5175,13 +5246,20 @@
       throw new Error(message);
     }
     const result = await response.json();
-    const textBlock = (result.content || []).find((b) => b.type === "text");
-    if (!textBlock) throw new Error("Empty response from Claude.");
+    const toolUse = (result.content || []).find(
+      (b) => b.type === "tool_use" && b.name === toolName
+    );
     let data;
-    try {
-      data = JSON.parse(textBlock.text);
-    } catch (_) {
-      throw new Error("Claude returned a non-JSON response.");
+    if (toolUse && toolUse.input && typeof toolUse.input === "object") {
+      data = toolUse.input;
+    } else {
+      const textBlock = (result.content || []).find((b) => b.type === "text");
+      if (!textBlock) throw new Error("Empty response from Claude.");
+      try {
+        data = JSON.parse(textBlock.text);
+      } catch (_) {
+        throw new Error("Claude returned a non-JSON response.");
+      }
     }
     let label = (data.label || "").toString().trim();
     // Strip surrounding quotes / fullstops Claude sometimes adds.
