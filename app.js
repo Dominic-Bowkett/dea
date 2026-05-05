@@ -766,7 +766,7 @@
   // ship alongside the HTML files.
   const BRAND_TEXT = "DEA";
 
-  function drawOverlay(ctx, width, height, dateText, gpsText) {
+  function drawOverlay(ctx, width, height, dateText, gpsText, elevationText) {
     const pad = Math.round(Math.min(width, height) * 0.015);
     const fontPx = Math.max(14, Math.round(Math.min(width, height) * 0.028));
     ctx.font = `600 ${fontPx}px -apple-system, Roboto, "Segoe UI", Arial, sans-serif`;
@@ -775,6 +775,7 @@
 
     const lineGap = Math.round(fontPx * 0.35);
     const lines = [dateText, gpsText];
+    if (elevationText) lines.push(elevationText);
     const metrics = lines.map((l) => ctx.measureText(l));
     const maxWidth = Math.max(...metrics.map((m) => m.width));
     const boxH = lines.length * fontPx + (lines.length - 1) * lineGap + pad * 2;
@@ -2481,6 +2482,23 @@
     return POINTS[idx];
   }
 
+  // Elevation naming on a building façade follows the wall's outward
+  // direction — i.e. the OPPOSITE of where the camera is pointing.
+  // Standing south of a house and shooting north (heading ≈ 0°), the
+  // wall in shot is the South Elevation. So we add 180° before snapping
+  // to a compass point.
+  function compassHeadingToElevation(heading) {
+    if (!Number.isFinite(heading)) return "";
+    return `${compassHeadingToOrientation(heading + 180)} Elevation`;
+  }
+
+  // Identify the External Elevations destination so the camera can
+  // start the compass watcher and the capture stamp can carry the
+  // wall's bearing.
+  function isExternalElevationsGroup(group) {
+    return !!group && (group.name || "").trim().toLowerCase() === "external elevations";
+  }
+
   // Continuous compass watcher used while the camera is open for a
   // window-photo capture. The shutter / Done event reads the latest
   // heading from this object and applies it to the target window.
@@ -4060,6 +4078,13 @@
       toast("Can't open the in-app camera — check camera permission.", "err");
       return;
     }
+    // External Elevations captures need the wall's bearing burned into
+    // the bottom-right stamp. Kick off the compass watcher so the
+    // shutter has a heading to read; ignore failures (no compass / no
+    // permission) — the photo just won't carry an elevation line.
+    if (isExternalElevationsGroup(group)) {
+      startCompassWatch().catch(() => {});
+    }
   }
 
   function cameraVideoTrack() {
@@ -4258,7 +4283,17 @@
     const ctx = canvas.getContext("2d");
     ctx.drawImage(video, 0, 0, outW, outH);
     const stampDate = new Date();
-    drawOverlay(ctx, outW, outH, formatStamp(stampDate), formatGps(state.gps));
+    // External Elevations only: snapshot the live compass heading and
+    // turn it into the wall's outward direction (heading + 180°). The
+    // text gets burned into the bottom-right stamp so reviewers can
+    // see at a glance which façade is which.
+    let elevationText = "";
+    let elevationHeading = null;
+    if (isExternalElevationsGroup(camera.group) && Number.isFinite(compassWatch.heading)) {
+      elevationHeading = compassWatch.heading;
+      elevationText = compassHeadingToElevation(elevationHeading);
+    }
+    drawOverlay(ctx, outW, outH, formatStamp(stampDate), formatGps(state.gps), elevationText);
     const dataUrl = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
     const photo = {
       id: uid("p"),
@@ -4272,6 +4307,8 @@
       defect: false,
       roomTag: NO_ROOM_TAG,
       label: "",
+      elevation: elevationText || null,
+      elevationHeading: elevationHeading,
     };
     camera.buffer.push(photo);
     flashScreen();
