@@ -4159,10 +4159,9 @@
 
     if (save && camera.buffer.length && camera.group) {
       if (laserCapture) {
-        // Laser-screen path. Only fires if the laser button has been
-        // un-hidden in #room-window-template. Supports both per-room
-        // windows and the top-level Windows section (laserCapture.roomId
-        // is null in the latter case).
+        // Laser-screen path. Supports both per-room windows and the
+        // top-level Windows section (laserCapture.roomId is null in
+        // the latter case).
         const captured = camera.buffer[camera.buffer.length - 1];
         const targetRoom = laserCapture.roomId
           ? (state.property && state.property.rooms || []).find(
@@ -4771,8 +4770,7 @@
   // the top-level Windows section) → we open the camera with a
   // pendingLaserCapture marker → after the photo commits, runLaserAutoFill
   // analyses it with the laser_measurement preset and writes width/height
-  // back to the window. The laser button is currently commented out in
-  // #room-window-template; uncomment to enable for both contexts.
+  // back to the window.
   function startLaserCapture(room, win) {
     const apiKey = getClaudeApiKey();
     if (!apiKey) {
