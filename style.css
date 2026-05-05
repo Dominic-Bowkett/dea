@@ -5,8 +5,8 @@
   --muted: #64748b;
   --line: #e2e8f0;
   --line-soft: #f1f5f9;
-  /* Energy Trust palette — slate-black header, deep teal headings,
-     bright yellow accent. */
+  /* DEA palette — slate-black header, deep teal headings, bright
+     yellow accent. */
   --primary: #0f172a;
   --primary-ink: #ffffff;
   --accent: #ffcd00;
@@ -75,15 +75,29 @@ html {
   letter-spacing: 0.5px;
 }
 
-/* When the logo is an image (the Energy Trust banner) we drop the
-   square chip styling and let it sit at its natural ratio so the
-   wordmark reads. */
+/* When the logo is an image we drop the square chip styling and let
+   it sit at its natural ratio so the wordmark reads. */
 .brand .logo-img {
   width: auto;
   height: 32px;
   border-radius: 0;
   background: transparent;
   display: block;
+}
+
+/* Text-only DEA wordmark. Sits inside the same chip footprint as
+   .brand .logo. */
+.brand .logo-text {
+  width: auto;
+  min-width: 40px;
+  padding: 0 10px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 1px;
+  font-size: 0.95rem;
 }
 
 .brand h1 {
@@ -839,6 +853,20 @@ input[type="date"]:focus {
   height: 28px;
   width: auto;
   flex: 0 0 auto;
+}
+
+.lightbox-logo.lightbox-logo-text {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.85);
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 1px;
+  font-size: 0.85rem;
 }
 
 .lightbox-header {
@@ -1632,9 +1660,8 @@ input[type="date"]:focus {
 }
 
 .tips-hero {
-  /* Slate panel that runs edge-to-edge inside the card so the
-     Energy Trust wordmark (transparent PNG with dark text) reads
-     cleanly. Mirrors the welcome dialog hero. */
+  /* Slate panel that runs edge-to-edge inside the card. Mirrors the
+     welcome dialog hero. */
   margin: -16px -16px 14px;
   padding: 16px;
   background: var(--primary);
@@ -1651,6 +1678,20 @@ input[type="date"]:focus {
   width: auto;
   max-width: 60%;
   flex: 0 0 auto;
+}
+
+.tips-hero .tips-logo.tips-logo-text {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--primary-ink);
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  font-size: 1.05rem;
 }
 
 .tips-hero h2 {
@@ -3452,9 +3493,7 @@ body.view-analysis .add-room-row {
 }
 
 .welcome-hero {
-  /* Slate panel that runs edge-to-edge inside the dialog card so
-     the Energy Trust wordmark (transparent PNG with dark text on
-     the right side) reads cleanly. */
+  /* Slate panel that runs edge-to-edge inside the dialog card. */
   margin: -20px -20px 16px;
   padding: 24px 20px;
   background: var(--primary);
@@ -3471,6 +3510,20 @@ body.view-analysis .add-room-row {
   width: auto;
   max-width: 100%;
   margin: 0;
+}
+
+.welcome-logo.welcome-logo-text {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 56px;
+  padding: 0 22px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--primary-ink);
+  font-weight: 800;
+  letter-spacing: 2px;
+  font-size: 1.6rem;
 }
 
 .welcome-install {

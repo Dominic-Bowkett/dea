@@ -751,47 +751,11 @@
     ctx.closePath();
   }
 
-  // Pre-load the Energy Trust logo so the capture-time stamp doesn't
-  // depend on a fresh network round-trip. Decoded once on app start
-  // and reused for every overlay draw plus the PDF / HTML exports.
-  const stampLogoImg = new Image();
-  let stampLogoReady = false;
-  stampLogoImg.crossOrigin = "anonymous";
-  stampLogoImg.onload = () => { stampLogoReady = true; };
-  stampLogoImg.onerror = () => { stampLogoReady = false; };
-  stampLogoImg.src = "logo.png?v=2";
-
-  // Returns the logo composited onto a slate-black canvas as a PNG
-  // dataURL, suitable for jsPDF.addImage and inline <img src=> in
-  // exported HTML. Returns null if the logo hasn't loaded yet.
-  let _logoOnBlackCache = null;
-  function logoOnBlackDataUrl() {
-    if (_logoOnBlackCache) return _logoOnBlackCache;
-    if (!stampLogoReady || !stampLogoImg.naturalWidth) return null;
-    const c = document.createElement("canvas");
-    const padX = Math.round(stampLogoImg.naturalWidth * 0.04);
-    const padY = Math.round(stampLogoImg.naturalHeight * 0.18);
-    c.width = stampLogoImg.naturalWidth + padX * 2;
-    c.height = stampLogoImg.naturalHeight + padY * 2;
-    const ctx = c.getContext("2d");
-    ctx.fillStyle = "#0f172a";
-    ctx.fillRect(0, 0, c.width, c.height);
-    ctx.drawImage(stampLogoImg, padX, padY);
-    _logoOnBlackCache = c.toDataURL("image/png");
-    return _logoOnBlackCache;
-  }
-
-  // Fetch the original logo PNG bytes for embedding in the export ZIP
-  // alongside the HTML files. Resolves with a Blob, or null on failure.
-  async function fetchLogoBlob() {
-    try {
-      const r = await fetch("logo.png?v=2");
-      if (!r.ok) return null;
-      return await r.blob();
-    } catch (_) {
-      return null;
-    }
-  }
+  // Brand wordmark used in the bottom-left of every captured photo and
+  // on the PDF / HTML exports. Plain text replaces the previous Energy
+  // Trust image so there's no network dependency and no extra asset to
+  // ship alongside the HTML files.
+  const BRAND_TEXT = "DEA";
 
   function drawOverlay(ctx, width, height, dateText, gpsText) {
     const pad = Math.round(Math.min(width, height) * 0.015);
@@ -823,37 +787,35 @@
     }
     ctx.shadowBlur = 0;
 
-    // Energy Trust brand stamp, bottom-left. Black box matches the
-    // height of the date / GPS stamp on the right; logo sits inside
-    // with a small inner margin and is capped to ~32% image width so
-    // it never dominates portrait shots.
-    if (
-      stampLogoReady &&
-      stampLogoImg.naturalWidth > 0 &&
-      stampLogoImg.naturalHeight > 0
-    ) {
-      const aspect = stampLogoImg.naturalWidth / stampLogoImg.naturalHeight;
-      const logoBoxH = boxH;
-      const innerPadY = Math.max(2, Math.round(pad * 0.6));
-      const innerPadX = Math.max(4, Math.round(pad * 1.0));
-      let logoH = logoBoxH - innerPadY * 2;
-      let logoW = logoH * aspect;
-      const logoBoxMaxW = Math.round(width * 0.32);
-      let logoBoxW = logoW + innerPadX * 2;
-      if (logoBoxW > logoBoxMaxW) {
-        logoBoxW = logoBoxMaxW;
-        logoW = logoBoxW - innerPadX * 2;
-        logoH = logoW / aspect;
-      }
-      const lx = pad;
-      const ly = height - pad - logoBoxH;
-      ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
-      roundRect(ctx, lx, ly, logoBoxW, logoBoxH, Math.round(pad * 0.6));
-      ctx.fill();
-      const imgX = lx + (logoBoxW - logoW) / 2;
-      const imgY = ly + (logoBoxH - logoH) / 2;
-      ctx.drawImage(stampLogoImg, imgX, imgY, logoW, logoH);
-    }
+    // DEA brand wordmark, bottom-left. Black box matches the height of
+    // the date / GPS stamp on the right; the text sits centred inside
+    // with a small inner margin.
+    const innerPadY = Math.max(2, Math.round(pad * 0.6));
+    const innerPadX = Math.max(6, Math.round(pad * 1.2));
+    const brandFontPx = Math.max(14, Math.round(boxH - innerPadY * 2));
+    const prevFont = ctx.font;
+    const prevAlign = ctx.textAlign;
+    ctx.font = `800 ${brandFontPx}px -apple-system, Roboto, "Segoe UI", Arial, sans-serif`;
+    ctx.textAlign = "left";
+    const brandTextW = ctx.measureText(BRAND_TEXT).width;
+    const logoBoxH = boxH;
+    const logoBoxW = Math.min(brandTextW + innerPadX * 2, Math.round(width * 0.32));
+    const lx = pad;
+    const ly = height - pad - logoBoxH;
+    ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+    roundRect(ctx, lx, ly, logoBoxW, logoBoxH, Math.round(pad * 0.6));
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.shadowColor = "rgba(0,0,0,0.75)";
+    ctx.shadowBlur = 2;
+    ctx.fillText(
+      BRAND_TEXT,
+      lx + (logoBoxW - brandTextW) / 2,
+      ly + (logoBoxH - brandFontPx) / 2 + brandFontPx * 0.85
+    );
+    ctx.shadowBlur = 0;
+    ctx.font = prevFont;
+    ctx.textAlign = prevAlign;
   }
 
   async function processFile(file) {
@@ -2792,7 +2754,8 @@
     if (captureBtn) {
       captureBtn.addEventListener("click", (e) => {
         e.stopPropagation();
-        if (!room) return;
+        // `room` is null for the top-level Windows section; startLaserCapture
+        // synthesises a pseudo-group so the camera flow still has a target.
         startLaserCapture(room, win);
       });
     }
@@ -4226,13 +4189,22 @@
 
     if (save && camera.buffer.length && camera.group) {
       if (laserCapture) {
-        // Laser-screen path: legacy. Only fires if the laser button has
-        // been un-hidden in the per-window template.
-        const targetRoom = camera.group;
+        // Laser-screen path. Only fires if the laser button has been
+        // un-hidden in #room-window-template. Supports both per-room
+        // windows and the top-level Windows section (laserCapture.roomId
+        // is null in the latter case).
         const captured = camera.buffer[camera.buffer.length - 1];
+        const targetRoom = laserCapture.roomId
+          ? (state.property && state.property.rooms || []).find(
+              (r) => r.id === laserCapture.roomId
+            ) || null
+          : null;
+        const winList = targetRoom
+          ? targetRoom.windows
+          : (state.property && state.property.windows) || [];
         const targetWin =
-          (targetRoom && targetRoom.windows
-            ? targetRoom.windows.find((w) => w.id === laserCapture.windowId)
+          (Array.isArray(winList)
+            ? winList.find((w) => w.id === laserCapture.windowId)
             : null) || null;
         if (targetWin) {
           runLaserAutoFill(targetRoom, targetWin, captured).catch((err) => {
@@ -4825,18 +4797,31 @@
   }
 
   // -------------------- Laser-measurer screen capture --------------------
-  // Flow: user taps "Capture from laser" in a room's Windows fieldset →
-  // we open the camera with a pendingLaserCapture marker → after the
-  // photo commits, runLaserPicker analyses it with the laser_measurement
-  // preset and pops the picker dialog.
+  // Flow: user taps "Capture from laser" in a room's Windows fieldset (or
+  // the top-level Windows section) → we open the camera with a
+  // pendingLaserCapture marker → after the photo commits, runLaserAutoFill
+  // analyses it with the laser_measurement preset and writes width/height
+  // back to the window. The laser button is currently commented out in
+  // #room-window-template; uncomment to enable for both contexts.
   function startLaserCapture(room, win) {
     const apiKey = getClaudeApiKey();
     if (!apiKey) {
       toast("Set a Claude API key in Settings before capturing from the laser screen.", "err");
       return;
     }
-    camera.pendingLaserCapture = { roomId: room.id, windowId: win ? win.id : null };
-    openCamera(room);
+    // Top-level Windows have no parent room — synthesise a pseudo-group so
+    // the camera flow has something to title the overlay with and so
+    // .windows resolution still works on commit.
+    const group = room || {
+      id: "__property_windows__",
+      name: "Windows",
+      windows: (state.property && state.property.windows) || [],
+    };
+    camera.pendingLaserCapture = {
+      roomId: room ? room.id : null,
+      windowId: win ? win.id : null,
+    };
+    openCamera(group);
   }
 
   async function runLaserAutoFill(room, win, photo) {
@@ -4891,9 +4876,12 @@
       if (v.valueM > largest.valueM) largest = v;
     }
 
-    // Make sure the target window still belongs to this room (the user
-    // could have removed it while the analysis was in flight).
-    const stillThere = (room.windows || []).some((w) => w.id === win.id);
+    // Make sure the target window still belongs to this scope (the
+    // user could have removed it while the analysis was in flight).
+    const winList = room
+      ? room.windows
+      : (state.property && state.property.windows) || [];
+    const stillThere = (winList || []).some((w) => w.id === win.id);
     if (!stillThere) return;
 
     win.width = largest.display;
@@ -4903,8 +4891,9 @@
 
     // Refresh the visible inputs for this specific window if its row
     // is currently rendered. Other interactions stay live throughout.
+    const roomScope = room ? `[data-room-id="${room.id}"] ` : "";
     const node = document.querySelector(
-      `[data-room-id="${room.id}"] [data-window-id="${win.id}"]`
+      `${roomScope}[data-window-id="${win.id}"]`
     );
     if (node) {
       const w = node.querySelector(".room-windows-width");
@@ -5443,8 +5432,7 @@
 <style>
 *{box-sizing:border-box}
 body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;font-size:14px;line-height:1.5;color:#0f172a;background:#f7f8fa}
-.brand{background:#0f172a;color:#fff;padding:14px 24px}
-.brand img{display:block;height:32px;width:auto}
+.brand{background:#0f172a;color:#fff;padding:14px 24px;font-weight:800;letter-spacing:2px;font-size:1.1rem}
 .wrap{max-width:1100px;margin:0 auto;padding:24px}
 header.report-meta{margin:0 0 18px}
 h1{margin:0 0 4px;font-size:1.4rem;color:#0f172a}
@@ -5461,7 +5449,7 @@ td:empty::before,td.empty{color:#94a3b8;content:"—"}
 </style>
 </head>
 <body>
-<div class="brand"><img src="logo.png" alt="Energy Trust" /></div>
+<div class="brand">DEA</div>
 <div class="wrap">
 <header class="report-meta">
   <h1>${escapeHtml(title)}</h1>
@@ -5564,26 +5552,19 @@ td:empty::before,td.empty{color:#94a3b8;content:"—"}
       }
     }
 
-    // Cover page (page 1) — Energy Trust logo banner across the top,
-    // then title + property meta below.
-    const logoDataUrl = logoOnBlackDataUrl();
+    // Cover page (page 1) — DEA wordmark banner across the top, then
+    // title + property meta below.
     let coverContentY = margin;
-    if (logoDataUrl) {
+    {
       const bannerH = 64;
       // Full-width slate banner across the top of the page.
       doc.setFillColor(15, 23, 42);
       doc.rect(0, 0, pageW, bannerH, "F");
-      // Centre the logo inside the banner with a 12pt vertical margin.
-      const imgPadY = 12;
-      const imgH = bannerH - imgPadY * 2;
-      const imgW = imgH * (stampLogoImg.naturalWidth / stampLogoImg.naturalHeight);
-      const imgX = margin;
-      const imgY = imgPadY;
-      try {
-        doc.addImage(logoDataUrl, "PNG", imgX, imgY, imgW, imgH);
-      } catch (err) {
-        console.warn("PDF logo banner failed", err);
-      }
+      // DEA wordmark, left-aligned with the page margin.
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(28);
+      doc.setTextColor(255, 255, 255);
+      doc.text(BRAND_TEXT, margin, bannerH / 2 + 10);
       coverContentY = bannerH + 24;
     }
 
@@ -6442,8 +6423,7 @@ td:empty::before,td.empty{color:#94a3b8;content:"—"}
 *{box-sizing:border-box}
 html,body{margin:0;padding:0;height:100%;background:#f7f8fa;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;font-size:15px;line-height:1.45;-webkit-font-smoothing:antialiased;overflow:hidden}
 body{display:flex;flex-direction:column;height:100vh}
-.brand{flex:0 0 auto;background:#0f172a;color:#fff;padding:12px 18px;padding-top:calc(12px + env(safe-area-inset-top));display:flex;align-items:center}
-.brand img{display:block;height:30px;width:auto}
+.brand{flex:0 0 auto;background:#0f172a;color:#fff;padding:12px 18px;padding-top:calc(12px + env(safe-area-inset-top));display:flex;align-items:center;font-weight:800;letter-spacing:2px;font-size:1.05rem}
 .app{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:280px 1fr;grid-template-rows:1fr auto;grid-template-areas:"sidebar stage" "sidebar filmstrip";background:#f7f8fa}
 .sidebar{grid-area:sidebar;background:#ffffff;border-right:1px solid #e2e8f0;display:flex;flex-direction:column;min-height:0;overflow:hidden}
 .sidebar-top{padding:16px 18px 12px;padding-top:calc(16px + env(safe-area-inset-top));border-bottom:1px solid #e2e8f0;background:#1e293b;color:#ffffff}
@@ -6850,7 +6830,7 @@ body:not(.js-ready) .app{display:none}
 <style>${css}</style>
 </head>
 <body>
-<div class="brand"><img src="logo.png" alt="Energy Trust" /></div>
+<div class="brand">DEA</div>
 <div class="app">
   <aside class="sidebar">
     <div class="sidebar-top">
@@ -7453,12 +7433,6 @@ ${nojsFallback}
             zip.file("window-measurements.html", buildWindowMeasurementsHtml());
           } catch (err) {
             console.warn("Window measurements HTML generation failed.", err);
-          }
-          try {
-            const logoBlob = await fetchLogoBlob();
-            if (logoBlob) zip.file("logo.png", logoBlob);
-          } catch (err) {
-            console.warn("Logo embed in ZIP failed.", err);
           }
         } else if (numParts > 1) {
           zip.file(
