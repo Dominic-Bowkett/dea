@@ -783,7 +783,11 @@
     const x = width - pad;
     const yTop = height - pad - boxH;
 
-    ctx.fillStyle = "rgba(0, 0, 0, 0.55)";
+    // Solid black so a retro-stamp (after a No-Category photo lands
+    // in External Elevations) cleanly covers the original 2-line box
+    // sat underneath. The previous semi-transparent fill let the old
+    // GPS line bleed through the new "<…> Elevation" line.
+    ctx.fillStyle = "#000";
     roundRect(ctx, x - boxW + pad, yTop, boxW, boxH, Math.round(pad * 0.6));
     ctx.fill();
 
