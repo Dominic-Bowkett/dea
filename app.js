@@ -3520,6 +3520,73 @@
     }
     if (!Array.isArray(target.photoIds)) target.photoIds = [];
     if (!target.photoIds.includes(photoId)) target.photoIds.push(photoId);
+    // Re-stamp the photo with its captured compass heading the moment
+    // it lands in External Elevations. Background — we don't want to
+    // hold the move waiting on canvas re-encode. applyElevationStamp
+    // is itself a no-op when the photo already has an elevation or
+    // never carried a heading.
+    if (isExternalElevationsGroup(target)) {
+      const photo = state.photos.get(photoId);
+      if (photo) {
+        applyElevationStamp(photo).catch((err) => {
+          console.warn("Elevation re-stamp failed", err);
+        });
+      }
+    }
+    return true;
+  }
+
+  // Re-render an already-saved photo so the bottom-right stamp box
+  // includes a third "<…> Elevation" line. Used when a photo captured
+  // outside the External Elevations group is later moved into it. The
+  // function silently bails when there's nothing to do (photo has no
+  // heading, is already stamped, or the dataUrl can't be loaded).
+  async function applyElevationStamp(photo) {
+    if (!photo) return false;
+    if (photo.elevation) return false;
+    const heading = Number.isFinite(photo.elevationHeading)
+      ? photo.elevationHeading
+      : null;
+    if (heading == null) return false;
+    const elevationText = compassHeadingToElevation(heading);
+    if (!elevationText) return false;
+    if (!photo.dataUrl) return false;
+
+    const img = await new Promise((resolve, reject) => {
+      const i = new Image();
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error("failed to decode photo"));
+      i.src = photo.dataUrl;
+    });
+    const c = document.createElement("canvas");
+    c.width = img.naturalWidth || photo.width || 0;
+    c.height = img.naturalHeight || photo.height || 0;
+    if (!c.width || !c.height) return false;
+    const ctx = c.getContext("2d");
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+
+    const dateText = photo.takenAt ? formatStamp(new Date(photo.takenAt)) : "";
+    const gpsText = formatGps(photo.gps);
+    drawOverlay(ctx, c.width, c.height, dateText, gpsText, elevationText);
+
+    photo.dataUrl = c.toDataURL("image/jpeg", JPEG_QUALITY);
+    photo.elevation = elevationText;
+    try {
+      await savePhotoNow(photo);
+    } catch (err) {
+      console.warn("Failed to persist elevation re-stamp", err);
+    }
+    // Refresh anything currently showing this photo.
+    const thumbs = document.querySelectorAll(
+      `figure.thumb[data-photo-id="${photo.id}"] img`
+    );
+    thumbs.forEach((el) => { el.src = photo.dataUrl; });
+    if (lightbox && lightbox.photos) {
+      const inLightbox = lightbox.photos.find((p) => p.id === photo.id);
+      if (inLightbox && els.lightboxImg && currentLightboxPhoto() === inLightbox) {
+        els.lightboxImg.src = photo.dataUrl;
+      }
+    }
     return true;
   }
 
@@ -4078,13 +4145,12 @@
       toast("Can't open the in-app camera — check camera permission.", "err");
       return;
     }
-    // External Elevations captures need the wall's bearing burned into
-    // the bottom-right stamp. Kick off the compass watcher so the
-    // shutter has a heading to read; ignore failures (no compass / no
-    // permission) — the photo just won't carry an elevation line.
-    if (isExternalElevationsGroup(group)) {
-      startCompassWatch().catch(() => {});
-    }
+    // Always run the compass watcher while the camera is open. The
+    // heading is stored on every captured photo so an elevation can
+    // be stamped in retroactively if the user moves a No-Category
+    // photo into External Elevations later. iOS prompts for
+    // permission once per session and the call is a no-op afterwards.
+    startCompassWatch().catch(() => {});
   }
 
   function cameraVideoTrack() {
@@ -4283,15 +4349,17 @@
     const ctx = canvas.getContext("2d");
     ctx.drawImage(video, 0, 0, outW, outH);
     const stampDate = new Date();
-    // External Elevations only: snapshot the live compass heading and
-    // turn it into the wall's outward direction (heading + 180°). The
-    // text gets burned into the bottom-right stamp so reviewers can
-    // see at a glance which façade is which.
+    // Always grab the live compass heading (when available) so the
+    // elevation can be stamped in later if the user moves a No-Category
+    // photo into External Elevations. The bottom-right stamp only gets
+    // an elevation line when External Elevations is the destination
+    // RIGHT NOW — applyElevationStamp() repaints the box for moves.
+    const headingNow = Number.isFinite(compassWatch.heading)
+      ? compassWatch.heading
+      : null;
     let elevationText = "";
-    let elevationHeading = null;
-    if (isExternalElevationsGroup(camera.group) && Number.isFinite(compassWatch.heading)) {
-      elevationHeading = compassWatch.heading;
-      elevationText = compassHeadingToElevation(elevationHeading);
+    if (isExternalElevationsGroup(camera.group) && headingNow != null) {
+      elevationText = compassHeadingToElevation(headingNow);
     }
     drawOverlay(ctx, outW, outH, formatStamp(stampDate), formatGps(state.gps), elevationText);
     const dataUrl = canvas.toDataURL("image/jpeg", JPEG_QUALITY);
@@ -4308,7 +4376,7 @@
       roomTag: NO_ROOM_TAG,
       label: "",
       elevation: elevationText || null,
-      elevationHeading: elevationHeading,
+      elevationHeading: headingNow,
     };
     camera.buffer.push(photo);
     flashScreen();
