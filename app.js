@@ -4496,10 +4496,18 @@
   // should continue, false if the user backed out.
   function validateBeforeDownload() {
     if (!state.property) return true;
+    const meta = state.property.meta || {};
+    // Once the user has confirmed "Continue anyway?" for the
+    // No-Category-Defined warning on this property, suppress it on
+    // every subsequent download — they've explicitly accepted that
+    // some photos are uncategorised. Empty-category warnings still
+    // fire because those represent a different kind of issue.
+    const untaggedAcknowledged = meta.untaggedWarningAcknowledged === true;
     const issues = [];
     const untagged = findUntaggedGroup();
     const untaggedCount = untagged ? (untagged.photoIds || []).length : 0;
-    if (untaggedCount > 0) {
+    const untaggedIssue = untaggedCount > 0 && !untaggedAcknowledged;
+    if (untaggedIssue) {
       issues.push(
         `• ${untaggedCount} photo${untaggedCount === 1 ? "" : "s"} still under "No Category Defined" — please assign a category before downloading.`
       );
@@ -4524,7 +4532,17 @@
       "Before downloading, please address:\n\n" +
       issues.join("\n\n") +
       "\n\nContinue anyway?";
-    return confirm(message);
+    const ok = confirm(message);
+    // Persist the acknowledgement on first OK so the warning doesn't
+    // come back every time the assessor downloads while still working.
+    if (ok && untaggedIssue) {
+      if (!state.property.meta || typeof state.property.meta !== "object") {
+        state.property.meta = {};
+      }
+      state.property.meta.untaggedWarningAcknowledged = true;
+      saveProperty();
+    }
+    return ok;
   }
 
   // Top Capture card: a single-select dropdown that defaults to
