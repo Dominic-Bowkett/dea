@@ -4505,8 +4505,11 @@
       );
     }
     const emptyNonNa = (state.property.groups || []).filter((g) => {
-      const name = (g.name || "").trim().toLowerCase();
-      if (name === "untagged") return false;
+      // "No Category Defined" is a holding-pen group, not a real
+      // report category — never flag it as an empty section that
+      // needs marking N/A or filling. The untagged-photos warning
+      // above already covers the case where photos are stuck there.
+      if (isUntaggedName(g.name)) return false;
       if (g.naMarked === true) return false;
       return (g.photoIds || []).length === 0;
     });
