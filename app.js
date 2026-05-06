@@ -2579,9 +2579,10 @@
     }).catch((err) => {
       console.warn("compass watch failed", err);
     });
-    // Property-level windows commit their photos to the Openings group
-    // (auto-created by makeDefaultGroups / migrateDefaults).
-    const target = room || findOpeningsGroup();
+    // All window photos land in the top-level Openings category — that's
+    // where the assessor expects to find every glazing shot regardless
+    // of which room the window record is attached to.
+    const target = findOpeningsGroup();
     if (!target) {
       toast("No Openings group available — try reloading the page.", "err");
       return;
