@@ -2370,6 +2370,16 @@ input[type="date"]:focus {
   cursor: pointer;
 }
 
+/* Class selectors above are more specific than the UA [hidden] rule,
+   so we have to restore display:none ourselves when the toggle is
+   hidden. Otherwise Insulated would always be visible regardless of
+   whether Shutters is on. */
+.room-windows-roof[hidden],
+.room-windows-shutters[hidden],
+.room-windows-shutters-insulated[hidden] {
+  display: none;
+}
+
 .room-windows-roof {
   margin-left: auto;
 }
