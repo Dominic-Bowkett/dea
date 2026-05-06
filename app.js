@@ -2724,7 +2724,7 @@
       const on = win.roofWindow === true;
       roofPill.dataset.state = on ? "on" : "off";
       roofPill.setAttribute("aria-pressed", String(on));
-      if (roofText) roofText.textContent = on ? "Roof window ✓" : "Roof window";
+      if (roofText) roofText.textContent = on ? "Roof ✓" : "Roof";
     };
     applyRoofPill();
     if (roofPill) {
