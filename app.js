@@ -4545,6 +4545,29 @@
     return ok;
   }
 
+  // Capture-card "No category selected" prompt. Same once-per-property
+  // model as the pre-download warning: confirm the first time the
+  // assessor takes a photo while the holding-pen group is selected,
+  // then suppress on every subsequent take for this property.
+  function ensureNoCategoryCaptureAck() {
+    if (!state.property) return true;
+    const meta = state.property.meta || {};
+    if (meta.noCategoryCaptureAcknowledged === true) return true;
+    const ok = confirm(
+      "No category selected. Photos will be filed under " +
+      "\"No Category Defined\" — you can tag them later from " +
+      "the lightbox. Continue?"
+    );
+    if (ok) {
+      if (!state.property.meta || typeof state.property.meta !== "object") {
+        state.property.meta = {};
+      }
+      state.property.meta.noCategoryCaptureAcknowledged = true;
+      saveProperty();
+    }
+    return ok;
+  }
+
   // Top Capture card: a single-select dropdown that defaults to
   // Untagged. Take/Upload buttons route the batch to the picked group.
   function renderCaptureCard() {
@@ -8331,14 +8354,7 @@ ${nojsFallback}
         return;
       }
       const isUntagged = isUntaggedName(target.name);
-      if (isUntagged) {
-        const ok = confirm(
-          "No category selected. Photos will be filed under " +
-          "\"No Category Defined\" — you can tag them later from " +
-          "the lightbox. Continue?"
-        );
-        if (!ok) return;
-      }
+      if (isUntagged && !ensureNoCategoryCaptureAck()) return;
       camera.fromCaptureCard = true;
       openCamera(target);
     });
