@@ -13,7 +13,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-    <link rel="stylesheet" href="style.css?v=88" />
+    <link rel="stylesheet" href="style.css?v=89" />
   </head>
   <body>
     <header class="app-header">
@@ -446,6 +446,14 @@
             <span class="room-windows-roof-dot" aria-hidden="true"></span>
             <span class="room-windows-roof-text">Roof window</span>
           </button>
+          <button type="button" class="room-windows-shutters" aria-pressed="false" data-state="off" title="Window has shutters fitted">
+            <span class="room-windows-shutters-dot" aria-hidden="true"></span>
+            <span class="room-windows-shutters-text">Shutters</span>
+          </button>
+          <button type="button" class="room-windows-shutters-insulated" aria-pressed="false" data-state="off" title="Shutters are insulated" hidden>
+            <span class="room-windows-shutters-dot" aria-hidden="true"></span>
+            <span class="room-windows-shutters-insulated-text">Insulated</span>
+          </button>
           <button type="button" class="room-windows-remove" aria-label="Remove this window">✕</button>
         </legend>
         <!-- Window Photo (auto orientation) removed — the compass pin
@@ -813,6 +821,6 @@
     <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/piexifjs@1.0.6/piexif.js"></script>
-    <script src="app.js?v=100"></script>
+    <script src="app.js?v=101"></script>
   </body>
 </html>
