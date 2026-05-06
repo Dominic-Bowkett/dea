@@ -6200,8 +6200,8 @@ td:empty::before,td.empty{color:#94a3b8;content:"—"}
       const tableRight = pageW - margin;
       const tableW = tableRight - tableLeft;
       // Weights for: No. | Window | Roof | Type | Age |
-      //              Orientation | Frame | Gap | Width | Height.
-      const colWeights = [0.6, 1.4, 0.7, 1.1, 1.3, 1.6, 1.2, 1.2, 1.4, 1.4];
+      //              Orientation | Frame | Gap | Width | Height | Shutters.
+      const colWeights = [0.6, 1.4, 0.7, 1.0, 1.1, 1.4, 1.0, 1.0, 1.2, 1.2, 1.2];
       const totalWeight = colWeights.reduce((a, b) => a + b, 0);
       const colWidths = colWeights.map((w) => (w / totalWeight) * tableW);
       const colX = [tableLeft];
