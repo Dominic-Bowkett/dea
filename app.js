@@ -7749,6 +7749,7 @@ ${nojsFallback}
           return dir;
         };
 
+        const skipped = [];
         for (const { group, room, photo, indexInGroup } of items) {
           let dir = dirForGroup.get(group.id);
           if (!dir) {
@@ -7762,12 +7763,32 @@ ${nojsFallback}
           }
           const folder = zip.folder(dir);
           doneOverall += 1;
+          // Last-ditch reload: if the dataUrl was dropped (visibility
+          // memory guard, partial save) try fetching from IDB before
+          // we hand the bytes to JSZip. Without this, dataUrlToBytes
+          // throws "Cannot read properties of null (reading 'split')".
+          if (!photo.dataUrl) {
+            try {
+              const fresh = await IDB.getPhoto(photo.id);
+              if (fresh && fresh.dataUrl) photo.dataUrl = fresh.dataUrl;
+            } catch (err) {
+              console.warn("Failed to reload photo for ZIP", photo.id, err);
+            }
+          }
+          if (!photo.dataUrl) {
+            skipped.push(photo.label || photo.id);
+            continue;
+          }
           // Compressed mode re-encodes to ~2200 px / q0.82; originals mode
           // zips the stored bytes. Either way EXIF (date / GPS) is
           // re-stamped so the saved file still carries metadata.
           let dataUrl = compress
             ? await reencodeForZip(photo.dataUrl)
             : photo.dataUrl;
+          if (!dataUrl) {
+            skipped.push(photo.label || photo.id);
+            continue;
+          }
           dataUrl = insertExifInto(dataUrl, photo);
           let bytes = dataUrlToBytes(dataUrl);
           dataUrl = null;
@@ -7785,6 +7806,13 @@ ${nojsFallback}
             toast(`Packaging photos${partLabel}… ${doneOverall}/${total}`);
             await yieldToUi();
           }
+        }
+        if (skipped.length) {
+          toast(
+            `Skipped ${skipped.length} photo${skipped.length === 1 ? "" : "s"} ` +
+            `whose data couldn't be loaded. Re-open them in the lightbox to refresh.`,
+            "err"
+          );
         }
 
         // A single self-contained viewer (filter + filmstrip + big photo)
